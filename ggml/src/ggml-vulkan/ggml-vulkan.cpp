@@ -828,6 +828,7 @@ struct vk_device_struct {
     vk_pipeline pipeline_rwkv_wkv7_f32;
     // [size_idx][kda] where size_idx: 0=d32, 1=d64, 2=d128
     vk_pipeline pipeline_gated_delta_net[3][2];
+    vk_pipeline pipeline_ssm_scan_f32_d64;
     vk_pipeline pipeline_ssm_scan_f32_d128;
     vk_pipeline pipeline_ssm_scan_f32_d256;
     vk_pipeline pipeline_ssm_conv_f32;
@@ -4688,9 +4689,11 @@ static void ggml_vk_load_shaders(vk_device& device) {
     }
 
     if (device->subgroup_arithmetic && device->subgroup_require_full_support) {
+        ggml_vk_create_pipeline(device, device->pipeline_ssm_scan_f32_d64, "ssm_scan_64_f32", ssm_scan_subgroup_f32_len, ssm_scan_subgroup_f32_data, "main", 8, sizeof(vk_op_ssm_scan_push_constants), {1, 1, 1}, {64, device->subgroup_size}, 1, true, true);
         ggml_vk_create_pipeline(device, device->pipeline_ssm_scan_f32_d128, "ssm_scan_128_f32", ssm_scan_subgroup_f32_len, ssm_scan_subgroup_f32_data, "main", 8, sizeof(vk_op_ssm_scan_push_constants), {1, 1, 1}, {128, device->subgroup_size}, 1, true, true);
         ggml_vk_create_pipeline(device, device->pipeline_ssm_scan_f32_d256, "ssm_scan_256_f32", ssm_scan_subgroup_f32_len, ssm_scan_subgroup_f32_data, "main", 8, sizeof(vk_op_ssm_scan_push_constants), {1, 1, 1}, {256, device->subgroup_size}, 1, true, true);
     } else {
+        ggml_vk_create_pipeline(device, device->pipeline_ssm_scan_f32_d64, "ssm_scan_64_f32", ssm_scan_f32_len, ssm_scan_f32_data, "main", 8, sizeof(vk_op_ssm_scan_push_constants), {1, 1, 1}, {64, device->subgroup_size, 16}, 1, true, true);
         ggml_vk_create_pipeline(device, device->pipeline_ssm_scan_f32_d128, "ssm_scan_128_f32", ssm_scan_f32_len, ssm_scan_f32_data, "main", 8, sizeof(vk_op_ssm_scan_push_constants), {1, 1, 1}, {128, device->subgroup_size, 16}, 1, true, true);
         ggml_vk_create_pipeline(device, device->pipeline_ssm_scan_f32_d256, "ssm_scan_256_f32", ssm_scan_f32_len, ssm_scan_f32_data, "main", 8, sizeof(vk_op_ssm_scan_push_constants), {1, 1, 1}, {256, device->subgroup_size, 16}, 1, true, true);
     }
@@ -9639,10 +9642,10 @@ static vk_pipeline ggml_vk_op_get_pipeline(ggml_backend_vk_context * ctx, const 
     case GGML_OP_SSM_SCAN:
         if (src0->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
             const uint32_t d_state = src0->ne[0];
-            if (d_state == 128) {
-                return ctx->device->pipeline_ssm_scan_f32_d128;
-            } else if (d_state == 256) {
-                return ctx->device->pipeline_ssm_scan_f32_d256;
+            switch (d_state) {
+                case 64: return ctx->device->pipeline_ssm_scan_f32_d64;
+                case 128: return ctx->device->pipeline_ssm_scan_f32_d128;
+                case 256: return ctx->device->pipeline_ssm_scan_f32_d256;
             }
         }
         return nullptr;
@@ -15713,7 +15716,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                     return false;
                 }
 
-                if ((d_state != 128 && d_state != 256) || head_dim % 16 != 0) {
+                if ((d_state != 64 && d_state != 128 && d_state != 256) || head_dim % 16 != 0) {
                     return false;
                 }
 
